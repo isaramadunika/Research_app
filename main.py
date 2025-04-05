@@ -8,263 +8,88 @@ import re
 import io
 from urllib.parse import quote
 
-
-def search_google_scholar_with_serpapi(query, num_results=100, api_key=None):
+def search_google_scholar(query, num_results=100):
     """
-    Search Google Scholar using SerpAPI.
-    This is a more reliable approach as SerpAPI handles all anti-scraping measures.
-    Requires a SerpAPI key (free trial available at serpapi.com).
-    
-    Parameters:
-    query (str): The search query
-    num_results (int): Number of results to retrieve (max 100)
-    api_key (str): Your SerpAPI key. If None, will try to get from environment variable
-    
-    Returns:
-    list: List of paper dictionaries with title, authors, abstract, etc.
+    Scrape research papers from Google Scholar based on query
     """
-    # Get API key from environment if not provided
-    if not api_key:
-        api_key = os.environ.get("SERPAPI_KEY")
-        if not api_key:
-            st.error("No SerpAPI key provided. Get one at https://serpapi.com/")
-            return []
+    # Replace spaces with '+' for URL formatting
+    formatted_query = quote(query)
+    papers = []
     
-    # Base parameters for all requests
-    base_params = {
-        "engine": "google_scholar",
-        "q": query,
-        "api_key": api_key,
-        "hl": "en",  # Language
-        "as_sdt": "0,5"  # Search all document types
-    }
-    
-    all_papers = []
-    papers_per_page = 10  # SerpAPI usually returns 10 results per page
-    
-    # Calculate how many pages we need
-    num_pages = (num_results + papers_per_page - 1) // papers_per_page
-    
-    st.info(f"Fetching up to {num_results} papers using SerpAPI (estimated {num_pages} pages)")
-    
-    # Loop through the pages
-    for page in range(num_pages):
-        start_index = page * papers_per_page
+    # Google Scholar shows maximum 10 results per page, so we need to paginate
+    for start in range(0, min(num_results, 100), 10):
+        # URL for Google Scholar search with pagination
+        url = f"https://scholar.google.com/scholar?q={formatted_query}&hl=en&as_sdt=0,5&start={start}&num=10"
         
-        # Update parameters for pagination
-        params = base_params.copy()
-        params["start"] = start_index
+        # Headers to mimic a browser visit (helps avoid blocking)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        }
         
         try:
-            st.info(f"Fetching page {page + 1}...")
+            # Send request with increased timeout
+            response = requests.get(url, headers=headers, timeout=15)
+            response.raise_for_status()
             
-            # Make request to SerpAPI
-            response = requests.get("https://serpapi.com/search", params=params)
+            # Parse HTML content
+            soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Check if request was successful
-            if response.status_code != 200:
-                st.error(f"Error: Received status code {response.status_code} from SerpAPI")
-                if response.status_code == 401:
-                    st.error("Authentication error: Check your API key")
-                break
+            # Extract paper information
+            paper_entries = soup.find_all('div', class_='gs_ri')
             
-            # Parse JSON response
-            data = response.json()
-            
-            # Check for error
-            if "error" in data:
-                st.error(f"SerpAPI Error: {data['error']}")
-                break
-            
-            # Extract organic results
-            organic_results = data.get("organic_results", [])
-            
-            if not organic_results:
-                st.warning("No more results available")
-                break
-            
-            # Process each result
-            for result in organic_results:
-                title = result.get("title", "No title available")
-                link = result.get("link", "")
+            for entry in paper_entries:
+                # Extract title and link
+                title_element = entry.find('h3', class_='gs_rt')
+                if title_element and title_element.a:
+                    title = title_element.a.text
+                    link = title_element.a.get('href', '')
+                else:
+                    title = title_element.text if title_element else "No title available"
+                    link = ""
                 
-                # Extract authors and publication info
-                publication_info = result.get("publication_info", {})
-                authors_text = publication_info.get("summary", "No author information")
+                # Extract authors, publication, year
+                author_info = entry.find('div', class_='gs_a')
+                author_text = author_info.text if author_info else "No author information"
                 
                 # Extract snippet/abstract
-                snippet = result.get("snippet", "No abstract available")
+                snippet = entry.find('div', class_='gs_rs')
+                snippet_text = snippet.text if snippet else "No abstract available"
                 
                 # Extract citation count
-                citation_info = result.get("inline_links", {}).get("cited_by", {})
-                citation_count = citation_info.get("total", 0)
-                citation_text = f"Cited by {citation_count}" if citation_count else "Citations not available"
-                
-                # Create paper dictionary
-                paper = {
-                    'title': title,
-                    'authors': authors_text,
-                    'abstract': snippet,
-                    'citations': citation_text,
-                    'link': link,
-                    'source': 'Google Scholar via SerpAPI'
-                }
-                
-                all_papers.append(paper)
-                
-                # Check if we have enough papers
-                if len(all_papers) >= num_results:
-                    break
-            
-            # Check if we have enough papers
-            if len(all_papers) >= num_results:
-                break
-            
-            # Add a small delay between pages to be nice to the API
-            time.sleep(random.uniform(1, 2))
-            
-        except Exception as e:
-            st.error(f"Error fetching results from SerpAPI: {str(e)}")
-            break
-    
-    return all_papers[:num_results]
-
-# Alternative using scholarly library
-def try_scholarly_search(query, num_results=100):
-    """Try to search using the scholarly library"""
-    try:
-        from scholarly import scholarly
-        import scholarly.scholarly as sch
-        
-        st.info("Using scholarly library to search Google Scholar")
-        papers = []
-        
-        # Configure scholarly to use a proxy if needed
-        # scholarly.use_proxy(...)
-        
-        # Sometimes scholarly needs to be configured with proxies to avoid blocking
-        # See: https://scholarly.readthedocs.io/en/latest/Config.html
-        
-        # Get a generator of publications
-        search_query = scholarly.search_pubs(query)
-        
-        # Iterate through search results
-        for i in range(min(num_results, 100)):
-            try:
-                publication = next(search_query)
-                
-                # Extract the relevant information
-                title = publication.get('bib', {}).get('title', 'No title available')
-                authors = publication.get('bib', {}).get('author', [])
-                authors_text = ', '.join(authors) if authors else 'No author information'
-                abstract = publication.get('bib', {}).get('abstract', 'No abstract available')
-                citations = publication.get('num_citations', 0)
-                citation_text = f"Cited by {citations}" if citations else "Citations not available"
-                link = publication.get('pub_url', '')
+                citation_info = entry.find('div', class_='gs_fl')
+                citation_text = "Citations not available"
+                if citation_info:
+                    for a_tag in citation_info.find_all('a'):
+                        if 'Cited by' in a_tag.text:
+                            citation_text = a_tag.text
+                            break
                 
                 papers.append({
                     'title': title,
-                    'authors': authors_text,
-                    'abstract': abstract,
+                    'authors': author_text,
+                    'abstract': snippet_text,
                     'citations': citation_text,
                     'link': link,
-                    'source': 'Google Scholar via scholarly'
+                    'source': 'Google Scholar'
                 })
-                
-                # Small delay to avoid triggering limits
-                time.sleep(random.uniform(1, 3))
-                
-            except StopIteration:
-                # No more results
+            
+            # Add delay between requests to avoid rate limiting
+            time.sleep(random.uniform(1.5, 3))
+            
+            if len(papers) >= num_results:
                 break
-            except Exception as e:
-                st.warning(f"Error fetching scholarly result {i+1}: {str(e)}")
-                time.sleep(random.uniform(5, 10))
-                continue
         
-        return papers
+        except requests.exceptions.RequestException as e:
+            st.error(f"Error fetching Google Scholar results: {e}")
+            # Continue with next page despite error
+            time.sleep(random.uniform(2, 4))
+            continue
     
-    except ImportError:
-        st.error("scholarly library is not installed. Install it with: pip install scholarly")
-        return []
-    except Exception as e:
-        st.error(f"Error with scholarly search: {str(e)}")
-        return []
-
-# Function to try multiple methods and return the first one that works
-def multi_method_search(query, num_results=100, serpapi_key=None):
-    """Try multiple methods to get Google Scholar results and return the first successful one"""
-    
-    # Method 1: Try SerpAPI if key is provided
-    if serpapi_key:
-        st.info("Trying SerpAPI method...")
-        papers = search_google_scholar_with_serpapi(query, num_results, serpapi_key)
-        if papers:
-            return papers
-    
-    # Method 2: Try scholarly
-    st.info("Trying scholarly method...")
-    papers = try_scholarly_search(query, num_results)
-    if papers:
-        return papers
-    
-    # Method 3: Fall back to a more reliable source - Semantic Scholar API
-    # This is not Google Scholar but is a reliable academic search API
-    st.info("Falling back to Semantic Scholar API...")
-    papers = search_semantic_scholar(query, num_results)
-    return papers
-
-def search_semantic_scholar(query, num_results=100):
-    """
-    Search Semantic Scholar API as a fallback
-    This is a free, reliable API for academic papers
-    """
-    papers = []
-    
-    # Semantic Scholar API endpoint
-    url = "https://api.semanticscholar.org/graph/v1/paper/search"
-    
-    try:
-        # Set parameters
-        params = {
-            "query": query,
-            "limit": min(num_results, 100),
-            "fields": "title,authors,abstract,citationCount,url,year"
-        }
-        
-        # Make request
-        response = requests.get(url, params=params)
-        
-        if response.status_code != 200:
-            st.error(f"Semantic Scholar API error: Status code {response.status_code}")
-            return papers
-            
-        data = response.json()
-        
-        # Process papers
-        for paper in data.get("data", []):
-            # Extract authors
-            authors = [author.get("name", "") for author in paper.get("authors", [])]
-            authors_text = ", ".join(authors) if authors else "No author information"
-            
-            # Create paper entry
-            papers.append({
-                "title": paper.get("title", "No title available"),
-                "authors": authors_text,
-                "abstract": paper.get("abstract", "No abstract available"),
-                "citations": f"Cited by {paper.get('citationCount', 0)}",
-                "link": paper.get("url", ""),
-                "source": "Semantic Scholar API"
-            })
-            
-    except Exception as e:
-        st.error(f"Error with Semantic Scholar API: {str(e)}")
-        
-    return papers
-
-# Example usage:
-# Get your API key from https://serpapi.com/ (they offer a free trial)
-# papers = multi_method_search("machine learning", num_results=100, serpapi_key="your_serpapi_key_here")
+    return papers[:num_results]
 
 def search_arxiv(query, max_results=100):
     """
