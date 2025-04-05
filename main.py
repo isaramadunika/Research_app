@@ -98,6 +98,7 @@ def search_arxiv(query, max_results=100):
     # Format query for arXiv API
     formatted_query = query.replace(' ', '+')
     url = f"http://export.arxiv.org/api/query?search_query=all:{formatted_query}&start=0&max_results={max_results}"
+    
     try:
         response = requests.get(url, timeout=15)
         response.raise_for_status()
@@ -148,7 +149,6 @@ def search_arxiv(query, max_results=100):
         st.error(f"Error fetching arXiv results: {e}")
         return []
 
-# Modified ResearchGate function with better error handling
 def search_research_gate(query, max_results=100):
     """
     Scrape research papers from ResearchGate based on query
@@ -175,81 +175,64 @@ def search_research_gate(query, max_results=100):
         'sec-fetch-user': '?1',
         'DNT': '1',
     }
+
     papers = []
     max_retries = 3
-    
-    # Use session to maintain cookies
     session = requests.Session()
-    
-    for retry in range(max_retries):
-        try:
+
+    try:
+        for retry in range(max_retries):
             # Add random delay between retries
             if retry > 0:
                 time.sleep(random.uniform(3, 7))
-            
-            # Send request with session
+
             response = session.get(url, headers=headers, timeout=20)
-            
-            # Check for 403 error
+
             if response.status_code == 403:
-                # Try with a completely different browser signature
+                # Try different headers
                 user_agents = [
                     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Safari/605.1.15',
                     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36',
                     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36 Edg/113.0.1774.57'
                 ]
                 headers['User-Agent'] = user_agents[retry % len(user_agents)]
-                
-                # Different referer
                 headers['Referer'] = 'https://scholar.google.com/'
-                
                 continue
-                
-                response.raise_for_status()
-            
-            # Parse HTML content
+
+            response.raise_for_status()
+
             soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Find all paper entries
             paper_entries = soup.select('div.search-result-item')
-            
-            # If we found entries, process them
+
             if paper_entries:
                 for entry in paper_entries[:max_results]:
-                    # Extract title and link
                     title_element = entry.select_one('a.search-result-title')
-                    if title_element:
-                        title = title_element.text.strip()
-                        link = "https://www.researchgate.net" + title_element.get('href', '') if title_element.get('href', '').startswith('/') else title_element.get('href', '')
-                    else:
-                        title = "No title available"
-                        link = ""
-                    
-                    # Extract authors
+                    title = title_element.text.strip() if title_element else "No title available"
+                    link = (
+                        "https://www.researchgate.net" + title_element.get('href', '')
+                        if title_element and title_element.get('href', '').startswith('/')
+                        else (title_element.get('href', '') if title_element else "")
+                    )
+
                     author_elements = entry.select('div.publication-author-list span[itemprop="name"]')
                     authors_text = ', '.join([author.text.strip() for author in author_elements]) if author_elements else "No authors available"
-                    
-                    # Extract abstract
+
                     abstract = "Abstract not available in search results. Click the link to view full details."
-                    
-                    # Extract publication info and metrics
+
                     pub_date_element = entry.select_one('div.publication-meta-date')
                     pub_date = pub_date_element.text.strip() if pub_date_element else ""
-                    
-                    # Try to extract citation count
+
                     citation_element = entry.select_one('div.publication-meta-stats')
                     citation_text = citation_element.text.strip() if citation_element else "Metrics not available"
-                    
-                    # Combine publication date and metrics
+
                     pub_info = []
                     if pub_date:
                         pub_info.append(pub_date)
-                        
-                        if citation_text and citation_text != "Metrics not available":
+                    if citation_text and citation_text != "Metrics not available":
                         pub_info.append(citation_text)
-                    
+
                     combined_info = " | ".join(pub_info) if pub_info else "Publication info not available"
-                    
+
                     papers.append({
                         'title': title,
                         'authors': authors_text,
@@ -258,14 +241,11 @@ def search_research_gate(query, max_results=100):
                         'link': link,
                         'source': 'ResearchGate'
                     })
-                    
-                    return papers[:max_results]
-        
-        except requests.exceptions.RequestException as e:
-            
-            st.error(f"Error fetching ResearchGate results: {e}")
-            
-            return []
+        return papers
+
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error fetching ResearchGate results: {e}")
+        return []
 
 def search_semantic_scholar(query, max_results=100):
     """
