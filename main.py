@@ -437,14 +437,47 @@ def search_science_direct(query, max_results=100):
     formatted_query = quote(query)
     url = f"https://www.sciencedirect.com/search?qs={formatted_query}"
     
+    # Enhanced headers to avoid "unsupported_browser" error
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Referer': 'https://www.google.com/',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'sec-ch-ua': '"Google Chrome";v="114", "Chromium";v="114", "Not=A?Brand";v="99"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"',
+        'sec-fetch-dest': 'document',
+        'sec-fetch-mode': 'navigate',
+        'sec-fetch-site': 'none',
+        'sec-fetch-user': '?1',
     }
     
     papers = []
     
+    # Use session to maintain cookies
+    session = requests.Session()
+    
     try:
-        response = requests.get(url, headers=headers, timeout=15)
+        # Add random delay before request
+        time.sleep(random.uniform(2, 4))
+        
+        # Send request with session
+        response = session.get(url, headers=headers, timeout=20)
+        
+        # Check for 'unsupported_browser' in URL
+        if 'unsupported_browser' in response.url:
+            time.sleep(2)
+            # Try with a different User-Agent
+            headers['User-Agent'] = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Safari/605.1.15'
+            response = session.get(url, headers=headers, timeout=20)
+            
+            if 'unsupported_browser' in response.url:
+                st.warning("ScienceDirect reports unsupported browser. Skipping this source.")
+                return []
+        
         response.raise_for_status()
         
         soup = BeautifulSoup(response.text, 'html.parser')
