@@ -157,77 +157,108 @@ def search_research_gate(query, max_results=100):
     formatted_query = quote(query)
     url = f"https://www.researchgate.net/search/publication?q={formatted_query}"
     
+    # Enhanced headers with more realistic browser fingerprint
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:100.0) Gecko/20100101 Firefox/100.0',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Referer': 'https://www.researchgate.net/',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Referer': 'https://www.google.com/search?q=research+papers+researchgate',
         'Connection': 'keep-alive',
         'Upgrade-Insecure-Requests': '1',
         'Cache-Control': 'max-age=0',
+        'sec-ch-ua': '"Google Chrome";v="114", "Chromium";v="114", "Not=A?Brand";v="99"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"',
+        'sec-fetch-dest': 'document',
+        'sec-fetch-mode': 'navigate',
+        'sec-fetch-site': 'cross-site',
+        'sec-fetch-user': '?1',
+        'DNT': '1',
     }
     
     papers = []
+    max_retries = 3
     
-    try:
-        # Send request
-        response = requests.get(url, headers=headers, timeout=20)
-        
-        # Check for 403 error specifically
-        if response.status_code == 403:
-            st.warning(f"Access to ResearchGate is blocked (403 Forbidden). Skipping this source.")
-            return []
+    # Use session to maintain cookies
+    session = requests.Session()
+    
+    for retry in range(max_retries):
+        try:
+            # Add random delay between retries
+            if retry > 0:
+                time.sleep(random.uniform(3, 7))
             
-        response.raise_for_status()
-        
-        # Parse HTML content
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Find all paper entries (adjust selectors based on site structure)
-        paper_entries = soup.select('div.search-result-item')
-        
-        for entry in paper_entries[:max_results]:
-            # Extract title and link
-            title_element = entry.select_one('a.search-result-title')
-            if title_element:
-                title = title_element.text.strip()
-                link = "https://www.researchgate.net" + title_element.get('href', '') if title_element.get('href', '').startswith('/') else title_element.get('href', '')
-            else:
-                title = "No title available"
-                link = ""
+            # Send request with session
+            response = session.get(url, headers=headers, timeout=20)
             
-            # Extract authors
-            author_elements = entry.select('div.publication-author-list span[itemprop="name"]')
-            authors_text = ', '.join([author.text.strip() for author in author_elements]) if author_elements else "No authors available"
+            # Check for 403 error
+            if response.status_code == 403:
+                # Try with a completely different browser signature
+                user_agents = [
+                    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Safari/605.1.15',
+                    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36',
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36 Edg/113.0.1774.57'
+                ]
+                headers['User-Agent'] = user_agents[retry % len(user_agents)]
+                
+                # Different referer
+                headers['Referer'] = 'https://scholar.google.com/'
+                
+                continue
             
-            # Extract abstract - ResearchGate typically doesn't show abstracts in search results
-            abstract = "Abstract not available in search results. Click the link to view full details."
+            response.raise_for_status()
             
-            # Extract publication info and metrics
-            pub_date_element = entry.select_one('div.publication-meta-date')
-            pub_date = pub_date_element.text.strip() if pub_date_element else ""
+            # Parse HTML content
+            soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Try to extract citation count if available
-            citation_element = entry.select_one('div.publication-meta-stats')
-            citation_text = citation_element.text.strip() if citation_element else "Metrics not available"
+            # Find all paper entries
+            paper_entries = soup.select('div.search-result-item')
             
-            # Combine publication date and metrics
-            pub_info = []
-            if pub_date:
-                pub_info.append(pub_date)
-            if citation_text and citation_text != "Metrics not available":
-                pub_info.append(citation_text)
-            
-            combined_info = " | ".join(pub_info) if pub_info else "Publication info not available"
-            
-            papers.append({
-                'title': title,
-                'authors': authors_text,
-                'abstract': abstract,
-                'citations': combined_info,
-                'link': link,
-                'source': 'ResearchGate'
-            })
+            # If we found entries, process them
+            if paper_entries:
+                for entry in paper_entries[:max_results]:
+                    # Extract title and link
+                    title_element = entry.select_one('a.search-result-title')
+                    if title_element:
+                        title = title_element.text.strip()
+                        link = "https://www.researchgate.net" + title_element.get('href', '') if title_element.get('href', '').startswith('/') else title_element.get('href', '')
+                    else:
+                        title = "No title available"
+                        link = ""
+                    
+                    # Extract authors
+                    author_elements = entry.select('div.publication-author-list span[itemprop="name"]')
+                    authors_text = ', '.join([author.text.strip() for author in author_elements]) if author_elements else "No authors available"
+                    
+                    # Extract abstract
+                    abstract = "Abstract not available in search results. Click the link to view full details."
+                    
+                    # Extract publication info and metrics
+                    pub_date_element = entry.select_one('div.publication-meta-date')
+                    pub_date = pub_date_element.text.strip() if pub_date_element else ""
+                    
+                    # Try to extract citation count
+                    citation_element = entry.select_one('div.publication-meta-stats')
+                    citation_text = citation_element.text.strip() if citation_element else "Metrics not available"
+                    
+                    # Combine publication date and metrics
+                    pub_info = []
+                    if pub_date:
+                        pub_info.append(pub_date)
+                    if citation_text and citation_text != "Metrics not available":
+                        pub_info.append(citation_text)
+                    
+                    combined_info = " | ".join(pub_info) if pub_info else "Publication info not available"
+                    
+                    papers.append({
+                        'title': title,
+                        'authors': authors_text,
+                        'abstract': abstract,
+                        'citations': combined_info,
+                        'link': link,
+                        'source': 'ResearchGate'
+                    })
         
         return papers[:max_results]
     
