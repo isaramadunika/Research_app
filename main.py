@@ -10,36 +10,115 @@ from urllib.parse import quote
 
 def search_google_scholar(query, num_results=100):
     """
-    Scrape research papers from Google Scholar based on query
+    Scrape research papers from Google Scholar based on query with improved anti-detection measures
+    Configured to handle up to 100 results with enhanced anti-blocking techniques
     """
     # Replace spaces with '+' for URL formatting
     formatted_query = quote(query)
     papers = []
+    session = requests.Session()  # Use a persistent session
     
-    # Google Scholar shows maximum 10 results per page, so we need to paginate
-    for start in range(0, min(num_results, 100), 10):
+    # Custom user agents list - expanded for better rotation
+    user_agents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Safari/605.1.15',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.45 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:94.0) Gecko/20100101 Firefox/94.0',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4692.99 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:96.0) Gecko/20100101 Firefox/96.0',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36 Edg/98.0.1108.56',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4692.71 Safari/537.36'
+    ]
+    
+    # Create a retry counter for each batch
+    retries = 0
+    max_retries = 3
+    
+    # Process in smaller batches to reduce detection risk
+    batch_size = 10  # Google Scholar shows 10 results per page
+    
+    for start in range(0, num_results, batch_size):
+        # Check if we've collected enough results
+        if len(papers) >= num_results:
+            break
+            
         # URL for Google Scholar search with pagination
-        url = f"https://scholar.google.com/scholar?q={formatted_query}&hl=en&as_sdt=0,5&start={start}&num=10"
+        url = f"https://scholar.google.com/scholar?q={formatted_query}&hl=en&as_sdt=0,5&start={start}&num={batch_size}"
         
-        # Headers to mimic a browser visit (helps avoid blocking)
+        # Randomize headers to appear more human-like
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'User-Agent': random.choice(user_agents),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
+            'Cache-Control': 'max-age=0',
+            'DNT': '1',  # Do Not Track
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'same-origin',
+            'Sec-Fetch-User': '?1',
+            'TE': 'Trailers',
         }
         
+        # Add referrer for all but first request to look more natural
+        if start > 0:
+            prev_url = f"https://scholar.google.com/scholar?q={formatted_query}&hl=en&as_sdt=0,5&start={start-batch_size}&num={batch_size}"
+            headers['Referer'] = prev_url
+        else:
+            headers['Referer'] = 'https://scholar.google.com/'
+        
         try:
-            # Send request with increased timeout
-            response = requests.get(url, headers=headers, timeout=15)
-            response.raise_for_status()
+            # Vary the delay time between requests - longer than before
+            delay = random.uniform(8, 15)
+            time.sleep(delay)
+            
+            # Send request
+            response = session.get(url, headers=headers, timeout=20)
+            
+            # Check response status
+            if response.status_code != 200:
+                retries += 1
+                if retries <= max_retries:
+                    st.warning(f"Received status code {response.status_code}. Retrying... ({retries}/{max_retries})")
+                    time.sleep(random.uniform(20, 30))  # Longer delay before retry
+                    continue
+                else:
+                    st.error(f"Failed after {max_retries} retries with status code {response.status_code}")
+                    break
             
             # Parse HTML content
             soup = BeautifulSoup(response.text, 'html.parser')
             
+            # Check if we got the CAPTCHA page
+            if 'sorry/index' in response.url or "Please show you're not a robot" in response.text:
+                st.warning("Google has detected automated access. Taking a longer break before continuing...")
+                time.sleep(random.uniform(60, 120))  # Take a much longer break
+                retries += 1
+                if retries > max_retries:
+                    st.error("Maximum retries exceeded. Consider using an API alternative.")
+                    break
+                continue
+            
+            # Reset retries counter on successful request
+            retries = 0
+            
             # Extract paper information
             paper_entries = soup.find_all('div', class_='gs_ri')
+            
+            # If no entries found, check if we've been blocked or reached the end
+            if not paper_entries:
+                if "Your search did not match any articles" in response.text:
+                    st.info("No more results available.")
+                    break
+                elif "automated access" in response.text.lower():
+                    st.warning("Google Scholar has detected automated access.")
+                    break
+                else:
+                    st.warning("No results found on this page. Continuing to next page...")
+                    time.sleep(random.uniform(15, 25))  # Longer delay after empty page
+                    continue
             
             for entry in paper_entries:
                 # Extract title and link
@@ -76,18 +155,27 @@ def search_google_scholar(query, num_results=100):
                     'link': link,
                     'source': 'Google Scholar'
                 })
+                
+                # Check if we've collected enough papers
+                if len(papers) >= num_results:
+                    break
             
-            # Add delay between requests to avoid rate limiting
-            time.sleep(random.uniform(1.5, 3))
+            # Vary delay between pages more significantly
+            # Occasionally take a longer break to appear more human-like
+            if random.random() < 0.2:  # 20% chance of a longer break
+                time.sleep(random.uniform(25, 40))
+            else:
+                time.sleep(random.uniform(12, 20))
             
-            if len(papers) >= num_results:
-                break
-        
         except requests.exceptions.RequestException as e:
             st.error(f"Error fetching Google Scholar results: {e}")
-            # Continue with next page despite error
-            time.sleep(random.uniform(2, 4))
-            continue
+            retries += 1
+            if retries <= max_retries:
+                time.sleep(random.uniform(30, 45))  # Much longer cooldown after error
+                continue
+            else:
+                st.error(f"Failed after {max_retries} retries due to connection errors")
+                break
     
     return papers[:num_results]
 
