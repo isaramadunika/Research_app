@@ -98,7 +98,6 @@ def search_arxiv(query, max_results=100):
     # Format query for arXiv API
     formatted_query = query.replace(' ', '+')
     url = f"http://export.arxiv.org/api/query?search_query=all:{formatted_query}&start=0&max_results={max_results}"
-    
     try:
         response = requests.get(url, timeout=15)
         response.raise_for_status()
@@ -176,7 +175,6 @@ def search_research_gate(query, max_results=100):
         'sec-fetch-user': '?1',
         'DNT': '1',
     }
-    
     papers = []
     max_retries = 3
     
@@ -206,8 +204,8 @@ def search_research_gate(query, max_results=100):
                 headers['Referer'] = 'https://scholar.google.com/'
                 
                 continue
-            
-            response.raise_for_status()
+                
+                response.raise_for_status()
             
             # Parse HTML content
             soup = BeautifulSoup(response.text, 'html.parser')
@@ -246,7 +244,8 @@ def search_research_gate(query, max_results=100):
                     pub_info = []
                     if pub_date:
                         pub_info.append(pub_date)
-                    if citation_text and citation_text != "Metrics not available":
+                        
+                        if citation_text and citation_text != "Metrics not available":
                         pub_info.append(citation_text)
                     
                     combined_info = " | ".join(pub_info) if pub_info else "Publication info not available"
@@ -259,12 +258,14 @@ def search_research_gate(query, max_results=100):
                         'link': link,
                         'source': 'ResearchGate'
                     })
+                    
+                    return papers[:max_results]
         
-        return papers[:max_results]
-    
-    except requests.exceptions.RequestException as e:
-        st.error(f"Error fetching ResearchGate results: {e}")
-        return []
+        except requests.exceptions.RequestException as e:
+            
+            st.error(f"Error fetching ResearchGate results: {e}")
+            
+            return []
 
 def search_semantic_scholar(query, max_results=100):
     """
